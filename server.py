@@ -15,7 +15,8 @@ app.add_middleware(
 )
 
 active_machines = {}
-pending_jobs = set() # This is the new Queue!
+pending_jobs = set() # Queue for starting jobs
+stop_jobs = set()    # Queue for stopping jobs
 
 class MachineStats(BaseModel):
     machine_id: str
@@ -32,7 +33,12 @@ def receive_heartbeat(stats: MachineStats):
     # 1. Update the ledger
     active_machines[stats.machine_id] = stats.model_dump()
     
-    # 2. Check the queue: Did a renter book this specific machine?
+    # 2. Check the stop queue FIRST to prioritize shutting down
+    if stats.machine_id in stop_jobs:
+        stop_jobs.remove(stats.machine_id)
+        return {"status": "success", "command": "stop-job"}
+        
+    # 3. Check the start queue: Did a renter book this specific machine?
     if stats.machine_id in pending_jobs:
         pending_jobs.remove(stats.machine_id)
         return {"status": "success", "command": "start-job"} # Tell the agent to boot Docker!
@@ -49,6 +55,14 @@ def rent_machine(req: RentRequest):
         # We put the job in the queue, waiting for the Agent's next heartbeat
         pending_jobs.add(req.machine_id)
         return {"status": "success", "message": "Rental secured! Agent is booting the room."}
+    return {"status": "error", "message": "Machine is currently offline."}
+
+@app.post("/stop")
+def stop_machine(req: RentRequest):
+    if req.machine_id in active_machines:
+        # Put the stop order in the queue
+        stop_jobs.add(req.machine_id)
+        return {"status": "success", "message": "Stop signal sent to Agent!"}
     return {"status": "error", "message": "Machine is currently offline."}
 
 if __name__ == "__main__":
