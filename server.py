@@ -65,5 +65,13 @@ def stop_machine(req: RentRequest):
         return {"status": "success", "message": "Stop signal sent to Agent!"}
     return {"status": "error", "message": "Machine is currently offline."}
 
+@app.post("/offline")
+def offline_machine(req: RentRequest):
+    # If the provider app hits "Stop", erase them from the active ledger
+    if req.machine_id in active_machines:
+        del active_machines[req.machine_id]
+        return {"status": "success", "message": "Machine removed from marketplace."}
+    return {"status": "success", "message": "Machine already offline."}
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=9000)
