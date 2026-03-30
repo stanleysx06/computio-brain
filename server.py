@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Optional
 import uvicorn
 
 app = FastAPI()
@@ -24,6 +25,7 @@ class MachineStats(BaseModel):
     ram_total_gb: float
     ram_available_gb: float
     gpu_info: str
+    workspace_url: Optional[str] = None # The secure tunnel link
 
 class RentRequest(BaseModel):
     machine_id: str
