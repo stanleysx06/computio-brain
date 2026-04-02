@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 import uvicorn
-import time  # NEW: We need this to track timestamps!
+import time
 
 app = FastAPI()
 
@@ -32,17 +32,21 @@ class RentRequest(BaseModel):
 
 @app.post("/heartbeat")
 def receive_heartbeat(stats: MachineStats):
-    # 1. Update the ledger WITH a timestamp
     machine_data = stats.model_dump()
     machine_data["last_seen"] = time.time()
+    
+    # CRITICAL: Preserve the rental state so the Mac's heartbeats don't overwrite it!
+    if stats.machine_id in active_machines:
+        machine_data["is_rented"] = active_machines[stats.machine_id].get("is_rented", False)
+    else:
+        machine_data["is_rented"] = False
+        
     active_machines[stats.machine_id] = machine_data
     
-    # 2. Check the stop queue
     if stats.machine_id in stop_jobs:
         stop_jobs.remove(stats.machine_id)
         return {"status": "success", "command": "stop-job"}
         
-    # 3. Check the start queue
     if stats.machine_id in pending_jobs:
         pending_jobs.remove(stats.machine_id)
         return {"status": "success", "command": "start-job"}
@@ -51,16 +55,13 @@ def receive_heartbeat(stats: MachineStats):
 
 @app.get("/marketplace")
 def get_marketplace():
-    # NEW: The Garbage Collector!
     current_time = time.time()
     stale_machines = []
     
-    # Scan for any machines that haven't sent a heartbeat in 15 seconds
     for m_id, data in active_machines.items():
         if current_time - data.get("last_seen", current_time) > 15:
             stale_machines.append(m_id)
             
-    # Kick the dead machines off the network
     for m_id in stale_machines:
         del active_machines[m_id]
         if m_id in pending_jobs: pending_jobs.remove(m_id)
@@ -71,6 +72,11 @@ def get_marketplace():
 @app.post("/rent")
 def rent_machine(req: RentRequest):
     if req.machine_id in active_machines:
+        # NEW: The Double-Booking Blocker!
+        if active_machines[req.machine_id].get("is_rented"):
+            return {"status": "error", "message": "Machine is already in use."}
+            
+        active_machines[req.machine_id]["is_rented"] = True
         pending_jobs.add(req.machine_id)
         return {"status": "success", "message": "Rental secured!"}
     return {"status": "error", "message": "Machine is offline."}
@@ -78,6 +84,8 @@ def rent_machine(req: RentRequest):
 @app.post("/stop")
 def stop_machine(req: RentRequest):
     if req.machine_id in active_machines:
+        # NEW: Mark the machine as available again for the next person
+        active_machines[req.machine_id]["is_rented"] = False
         stop_jobs.add(req.machine_id)
         return {"status": "success", "message": "Stop signal sent!"}
     return {"status": "error", "message": "Machine is offline."}
